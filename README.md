@@ -23,12 +23,12 @@ eduroam-boost 做三件事：
 <td width="33%" valign="top">
 <img src="docs/assets/measure.svg" width="32" height="32" alt=""><br>
 <b>测</b><br>
-<sub>频段、信号、到路由器的延迟和丢包，判断瓶颈是 Wi-Fi 这一跳还是学校出口</sub>
+<sub>频段、信号、到路由器的延迟和丢包，以及附近每台 AP 的<b>信道占用率和接入人数</b>（Mac 平时不显示）</sub>
 </td>
 <td width="33%" valign="top">
 <img src="docs/assets/fix.svg" width="32" height="32" alt=""><br>
 <b>治</b><br>
-<sub>只在确实很慢时重连 Wi-Fi、换热点；Windows 还能让网卡长期优先 5GHz</sub>
+<sub>找座位模式实时显示 5GHz 和 2.4GHz 的信号差，帮你找到 Mac 会自己选 5GHz 的位置；只在有希望时才重连</sub>
 </td>
 <td width="33%" valign="top">
 <img src="docs/assets/verify.svg" width="32" height="32" alt=""><br>
@@ -70,8 +70,8 @@ $ eduroam-boost
 
 | 平台 | 能做什么 | 安装方式 | 状态 |
 |---|---|---|---|
-| **macOS** | 诊断 · 重连换热点 · 后台监控 · 效果统计 | 一行命令 | <img src="docs/assets/status-stable-zh.svg" height="20" alt=""> 真机使用中 |
-| **Windows** | 以上全部，外加**让网卡长期优先 5GHz** | 一行命令 | <img src="docs/assets/status-experimental-zh.svg" height="20" alt=""> 自动测试通过，尚未在真机上验证 |
+| **macOS** | 诊断 · 扫描每台 AP 的拥挤程度 · 找座位 · 重连 · 后台监控 · 效果统计 | 一行命令 | <img src="docs/assets/status-stable-zh.svg" height="20" alt=""> 真机使用中 |
+| **Windows** | 诊断 · 重连 · 后台监控 · 效果统计，外加**让网卡长期优先 5GHz** | 一行命令 | <img src="docs/assets/status-experimental-zh.svg" height="20" alt=""> 自动测试通过，尚未在真机上验证 |
 | **iPhone / iPad** | 一键关开 Wi-Fi（快捷指令） | 导入快捷指令 | <img src="docs/assets/status-experimental-zh.svg" height="20" alt=""> 尚未在真机上验证 |
 | **安卓** | 系统不允许 App 开关 Wi-Fi | 手动操作 | <img src="docs/assets/status-guide-zh.svg" height="20" alt=""> |
 
@@ -95,6 +95,8 @@ curl -fsSL https://raw.githubusercontent.com/LucasYanzy/eduroam-boost/main/insta
 
 想跳过提问，可以直接带参数：`… | bash -s -- --watch`、`--watch-auto` 或 `--no-watch`。
 
+装好后运行一次 `eduroam-boost authorize`，在弹窗里点「允许」，就能用 `survey` 和 `seat` 了（[为什么要定位权限？](#常见问题)）。
+
 > 需要 Python 3.8+。macOS 一般自带，如果提示找不到，先运行 `xcode-select --install`。
 > 不需要管理员权限，只用 Python 标准库和 macOS 自带命令。命令装在 `~/.local/bin`，安装脚本会告诉你是否需要把它加进 PATH。
 
@@ -114,16 +116,20 @@ irm https://raw.githubusercontent.com/LucasYanzy/eduroam-boost/main/windows/inst
 |---|---|
 | `eduroam-boost` | 看当前状况并给出诊断（等同于 `status`） |
 | `eduroam-boost diagnose` | 20 秒对比测试：慢在 Wi-Fi 这一跳，还是学校出口 / 运营商？ |
-| `eduroam-boost boost` | 重连 Wi-Fi，最多 3 次，每次都重新测量，变好就停。连接本来就不慢时不会动手（`--force` 强制，`--tries N` 改次数） |
+| `eduroam-boost survey` | 列出这个网络附近的每台 AP：频段、信道、信号、**信道占用率、接入人数**，并告诉你换频段有没有希望（`--all` 显示所有网络） |
+| `eduroam-boost seat` | 找座位：每几秒刷新 5GHz 与 2.4GHz 的信号差，你挪动电脑，看到「5GHz 够强了」就停下（`--minutes N`） |
+| `eduroam-boost authorize` | 一次性授权定位，`survey` 和 `seat` 需要 |
+| `eduroam-boost boost` | 先看扫描结果：5GHz 足够接近、当前信道又很挤时才重连，最多 3 次，换到 5GHz 就停；5GHz 太弱时直接告诉你重连没用（`--force` 强制，`--tries N` 改次数） |
 | `eduroam-boost watch` | 前台持续监控；加 `--auto` 自动重连，`--interval 秒数` 改检查间隔 |
 | `eduroam-boost report` | 最近 24 小时的统计（`--hours N` 改范围）：各频段占比、延迟、每次 boost 的前后对比，以及**效果维持了多久** |
 | `eduroam-boost prefer-5g` | 仅 Windows：把网卡驱动的「首选频带」设为 5GHz，重启后也有效；`-Undo` 恢复默认 |
 
 推荐的使用顺序：
 
-1. 觉得卡 → 先运行 `eduroam-boost diagnose`，看是不是 Wi-Fi 的问题
-2. 是 Wi-Fi 的问题 → `eduroam-boost boost`（Windows 优先用 `prefer-5g`）
-3. 用了几天 → `eduroam-boost report`，看到底有没有用
+1. 觉得卡 → `eduroam-boost diagnose`，看是不是 Wi-Fi 的问题
+2. 是 Wi-Fi 的问题 → `eduroam-boost survey`，看当前信道有多挤、5GHz 差多少
+3. 5GHz 只差一点 → `eduroam-boost boost`；差得多 → `eduroam-boost seat` 换个位置（Windows 优先用 `prefer-5g`）
+4. 用了几天 → `eduroam-boost report`，看到底有没有用
 
 输出语言跟随系统（中文或英文），可以用 `EDUROAM_BOOST_LANG=zh` 或 `=en` 强制指定。日志保存在 macOS 的 `~/Library/Logs/eduroam-boost/`、Windows 的 `%LOCALAPPDATA%\eduroam-boost\`。
 
@@ -141,30 +147,41 @@ flowchart TD
 
 **为什么会这样：**一台校园 AP 通常同时发 2.4GHz 和 5GHz（新的还有 6GHz）。2.4GHz 穿墙好，但信道少、人一多就挤；5/6GHz 快得多。设备第一次连上哪个频段，往往就一直待着不换（sticky client），哪怕旁边的 5GHz 好得多。
 
-**怎么判断：**读取系统的 Wi-Fi 信息（频段、信号、附近有没有同类型的 5/6GHz 网络），再 ping 默认网关，测出第一跳的延迟和丢包。只有**实测到的症状**（延迟 >100ms 或丢包 >10%）才算慢；单纯“连在 2.4GHz、旁边有 5GHz”只作为提示，因为弱的 5GHz 可能比还不错的 2.4GHz 更差（[实测](#实测结果)里就遇到了）。
+**怎么判断：**读取系统的 Wi-Fi 信息（频段、信号），再 ping 默认网关，测出第一跳的延迟和丢包。授权定位后，辅助 App 还会读取每台 AP 在信标里广播的 **BSS Load**（信道占用率、接入人数），这才是 2.4GHz 慢的真正原因：信号再好，信道 90% 的时间被占着也快不起来。注意这是 AP 广播的瞬时值，每次扫描会有波动。只有**实测到的症状**（延迟 >100ms 或丢包 >10%）才算慢；单纯“连在 2.4GHz、旁边有 5GHz”只作为提示，因为弱的 5GHz 可能比还不错的 2.4GHz 更差（[实测](#实测结果)里就遇到了）。
 
-**怎么处理：**macOS 和 iOS 都不让手动选频段或指定热点，但关掉再打开 Wi-Fi 会触发重新扫描，经常就换到了更好的热点。Windows 上，多数无线网卡驱动有「首选频带（Preferred Band）」选项，直接设成偏好 5GHz，比反复重连更彻底。
+**怎么处理：**Mac 只按信号强弱选 AP，5GHz 比 2.4GHz 弱几 dB 就不会去连，哪怕 2.4GHz 已经挤爆。macOS 不允许为 eduroam 这类账号密码登录的网络强制指定 AP（实测：不传账号密码时系统会忽略指定，仍按自己的规则选），所以真正有效的办法是**让 5GHz 在 Mac 眼里变强**：`seat` 帮你找到 5GHz 不比 2.4GHz 弱的位置，Mac 就会自己稳定地连上 5GHz。5GHz 只差一两 dB 时，`boost` 重连一次往往就能换过去。Windows 上，多数无线网卡驱动有「首选频带（Preferred Band）」选项，直接设成偏好 5GHz，比反复重连更彻底。
 
 **怎么验证：**每次 boost 都会记下前后数据；后台监控持续采样，`report` 据此算出成功率、各频段的延迟，以及每次 boost 之后过了多久又变慢。
 
 ## 实测结果
 
-2026 年 11 月，一台 MacBook Pro 在美国某大学的 eduroam 上，同一个位置：
+2026 年 11 月，一台 MacBook Pro 在美国某大学的 eduroam 上，同一个座位，下午时段。
 
-| 时间 | 频段 / 信号 | 到路由器（平均 / 最高） | 丢包 |
-|---|---|---|---|
-| 13:28 | 2.4GHz 第 6 信道，-70 dBm | 72ms / 230ms | 0–10% |
-| 14:05 | 2.4GHz 第 6 信道，-73 dBm | **546ms / 1544ms** | 0% |
-| 14:14（boost 前） | 2.4GHz，-69 dBm | 25ms | 0% |
-| boost 重连 3 次后 | 每次都还是 2.4GHz，-68 dBm | 10–43ms | 0–10% |
+**扫描结果**（`eduroam-boost survey`，同一台 AP 的三个频段）：
+
+| 频段 | 信道 | 信号 | 信道占用 | 接入设备 |
+|---|---|---|---|---|
+| 2.4GHz（Mac 选的） | 6 | -68 ~ -71 dBm | **59–90%** | 2–5 |
+| 5GHz | 157（40MHz） | -76 ~ -80 dBm | 15–39% | 15–17 |
+| 6GHz | 149（80MHz） | -84 ~ -88 dBm | 0% | 3–5 |
+
+**两个频段的实际表现**（同一台 AP，先后各测一次）：
+
+| | 2.4GHz 第 6 信道 | 5GHz 第 157 信道 |
+|---|---|---|
+| 下载速度 | **0.3–0.8 Mbps** | **约 50 Mbps** |
+| 丢包 | 3–6% | 0–1% |
+| 到外网的延迟（中位数） | 60–120ms | 60–120ms（差不多） |
 
 如实地说：
 
-- **在这个位置 boost 没能换到 5GHz。** 附近能看到同类的 5GHz 网络，但 3 次重连 Mac 都选了 2.4GHz，说明那里的 5GHz 信号更弱，Mac 的选择是对的。
-- **同一个热点，延迟一天里从 10ms 到 1.5 秒剧烈波动。** 主要是这台 AP 的拥挤程度在变，不完全是频段问题。
-- **这次测试改进了工具本身。** 早期版本只要“在 2.4GHz 且旁边有 5GHz”就重连，结果白白断网 3 次，所以现在只看延迟和丢包。
+- **慢的根源是 2.4GHz 信道被挤爆**，下载速度只有 5GHz 的几十分之一；延迟两边差不多，下午整个校园网都偏慢。
+- **5GHz 只弱了 5–11 dB，Mac 就死守 2.4GHz**，重连多少次都一样。这就是 `seat` 存在的原因：换个能让 5GHz 追上来的位置。
+- **关掉 AWDL（AirDrop/接力）效果很小**：交替测了 4 轮，超过 50ms 的尖峰从 37% 降到 26%，但最慢的那部分延迟和丢包没有改善，所以没有做成功能（测试脚本在 `tools/awdl-test.sh`）。
+- **强制指定 AP 走不通**：不提供账号密码时，系统会忽略指定、按自己的规则重新选，实测 3 次都回到 2.4GHz。
+- **早期版本的“断网重连”在这里没用**，还曾在延迟正常时白白断网 3 次；现在先看扫描结果，没希望就不重连。
 
-后台监控的长期数据（效果能维持多久）会持续补充。也欢迎把你学校的 `eduroam-boost report` 结果[提交到 Issues](https://github.com/LucasYanzy/eduroam-boost/issues)。
+欢迎把你学校的 `eduroam-boost survey` 结果[提交到 Issues](https://github.com/LucasYanzy/eduroam-boost/issues)。
 
 ## iPhone / iPad
 
@@ -194,7 +211,7 @@ iOS 不允许任何 App 选择频段或读取热点详情，所以手机上能�
 
 - **不收集、不上传任何数据。** 所有记录只保存在你自己的电脑上。
 - **只发出很少的网络请求**：ping 你的默认网关；`diagnose` 额外 ping 一次 `1.1.1.1`。
-- **不需要热点名称。** macOS 不给定位权限时会隐藏热点名，本工具也用不到它。
+- **定位权限只用来看热点。** macOS 规定，读取热点名称和地址必须有定位权限，所以 `survey`/`seat` 需要授权一次；辅助 App 从不读取你的位置。它在你电脑上从源码编译（`macos-helper/main.swift`，不到 200 行），不联网。
 - **不改系统的网络配置。** macOS 上只会关开 Wi-Fi；Windows 上只有你主动运行 `prefer-5g` 时才会改网卡的「首选频带」，`-Undo` 可以恢复。
 - **代码很短**，主程序只有一个 Python 文件和一个 PowerShell 文件，安装前可以先读一遍。
 
@@ -219,9 +236,15 @@ iOS 不允许任何 App 选择频段或读取热点详情，所以手机上能�
 </details>
 
 <details>
-<summary><b>为什么不直接指定连哪个 BSSID（具体某个热点）？</b></summary>
+<summary><b>为什么要定位权限？</b></summary>
 
-macOS 和 iOS 不允许命令行工具这么做（需要定位权限和私有接口）。本工具只用系统公开、稳定的功能，升级系统也不容易坏。
+从 macOS 14 开始，没有定位权限的程序看不到热点名称、地址和 AP 广播的负载信息，扫描结果全是隐藏的。辅助 App 只用它来读这些信息，不读取、不保存你的位置。不授权也能用 `status`、`diagnose`、`boost`、`watch`，只是 `survey` 和 `seat` 不能用。
+</details>
+
+<details>
+<summary><b>为什么不直接强制连到 5GHz 的那台 AP？</b></summary>
+
+试过了。macOS 的接口在不提供 eduroam 账号密码时会忽略指定的 AP，按自己的规则（主要看信号强弱）重新选。读取你的 eduroam 密码在安全上太敏感，所以本工具不这么做，而是帮你找到 Mac 会自己选 5GHz 的位置。
 </details>
 
 <details>
@@ -250,7 +273,9 @@ irm https://raw.githubusercontent.com/LucasYanzy/eduroam-boost/main/windows/unin
 eduroam_boost.py        macOS 命令行工具（只用标准库）
 install.sh / uninstall.sh
 windows/                PowerShell 版、安装/卸载脚本、Pester 测试
+macos-helper/           辅助 App（Swift）：定位授权、扫描每台 AP 的负载
 ios/                    iPhone 快捷指令及其生成脚本
+tools/                  实验脚本（如 AWDL 对比测试）
 tests/                  macOS 单元测试和安装测试
 ```
 
@@ -258,6 +283,7 @@ tests/                  macOS 单元测试和安装测试
 python3 -m unittest discover -s tests -v                  # macOS：单元测试 + 安装/卸载测试（都在临时目录里进行）
 pwsh -c "Invoke-Pester windows/tests -Output Detailed"    # Windows：解析逻辑测试
 python3 ios/build_shortcut.py                             # 重新生成并签名快捷指令（需要 macOS）
+./macos-helper/build.sh                                   # 编译辅助 App（需要 Xcode 命令行工具），输出到 build/
 ```
 
 每次提交，CI 都会在 macOS、Windows 和 Linux（shellcheck）上跑一遍。特别欢迎这几类贡献：

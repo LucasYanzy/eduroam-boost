@@ -23,12 +23,12 @@ eduroam-boost does three things:
 <td width="33%" valign="top">
 <img src="docs/assets/measure.svg" width="32" height="32" alt=""><br>
 <b>Measure</b><br>
-<sub>Band, signal, first-hop latency and loss: is the bottleneck the Wi-Fi hop or the network upstream?</sub>
+<sub>Band, signal, first-hop latency and loss, plus every nearby AP's <b>channel utilization and client count</b> (which macOS normally hides)</sub>
 </td>
 <td width="33%" valign="top">
 <img src="docs/assets/fix.svg" width="32" height="32" alt=""><br>
 <b>Fix</b><br>
-<sub>Reconnect to a better access point, only when it's actually slow; on Windows, make the adapter prefer 5 GHz for good</sub>
+<sub>A seat finder shows the live 5 GHz vs 2.4 GHz signal gap so you can find a spot where macOS picks 5 GHz on its own; reconnects only when that can work</sub>
 </td>
 <td width="33%" valign="top">
 <img src="docs/assets/verify.svg" width="32" height="32" alt=""><br>
@@ -70,8 +70,8 @@ Try:  eduroam-boost boost
 
 | Platform | What it can do | Install | Status |
 |---|---|---|---|
-| **macOS** | Diagnose · reconnect to a better AP · background watcher · effectiveness stats | One command | <img src="docs/assets/status-stable-en.svg" height="20" alt=""> In daily use on real hardware |
-| **Windows** | All of the above, plus **make the adapter prefer 5 GHz permanently** | One command | <img src="docs/assets/status-experimental-en.svg" height="20" alt=""> Automated tests pass, not yet verified on real hardware |
+| **macOS** | Diagnose · per-AP congestion survey · seat finder · reconnect · background watcher · effectiveness stats | One command | <img src="docs/assets/status-stable-en.svg" height="20" alt=""> In daily use on real hardware |
+| **Windows** | Diagnose · reconnect · background watcher · effectiveness stats, plus **make the adapter prefer 5 GHz permanently** | One command | <img src="docs/assets/status-experimental-en.svg" height="20" alt=""> Automated tests pass, not yet verified on real hardware |
 | **iPhone / iPad** | One-tap Wi-Fi off/on (Shortcut) | Import a Shortcut | <img src="docs/assets/status-experimental-en.svg" height="20" alt=""> Not yet verified on a device |
 | **Android** | Apps can't toggle Wi-Fi on modern Android | Manual steps | <img src="docs/assets/status-guide-en.svg" height="20" alt=""> |
 
@@ -95,6 +95,8 @@ The installer asks whether to start a **background watcher** at login:
 
 To skip the question, pass a flag: `… | bash -s -- --watch`, `--watch-auto` or `--no-watch`.
 
+Afterwards, run `eduroam-boost authorize` once and click **Allow** to enable `survey` and `seat` ([why Location?](#faq)).
+
 > Requires Python 3.8+, which macOS usually has. If it's missing, run `xcode-select --install` first.
 > No admin rights needed; it uses only the Python standard library and built-in macOS tools. The command goes into `~/.local/bin`, and the installer tells you if that needs adding to your PATH.
 
@@ -114,16 +116,20 @@ The installer asks two things: whether to start a background watcher at logon, a
 |---|---|
 | `eduroam-boost` | Current status with a diagnosis (same as `status`) |
 | `eduroam-boost diagnose` | 20-second side-by-side test: is the Wi-Fi hop slow, or the campus uplink / ISP? |
-| `eduroam-boost boost` | Reconnect Wi-Fi up to 3 times, re-measuring each time, and stop once it's fast. Does nothing if the connection isn't slow (`--force` to override, `--tries N` to change the count) |
+| `eduroam-boost survey` | Every AP of this network nearby: band, channel, signal, **channel utilization, clients**, and whether switching bands can work (`--all` for every network) |
+| `eduroam-boost seat` | Seat finder: refreshes the 5 GHz vs 2.4 GHz gap every few seconds; move the laptop until it says 5 GHz is strong enough (`--minutes N`) |
+| `eduroam-boost authorize` | One-time Location permission, needed by `survey` and `seat` |
+| `eduroam-boost boost` | Checks the survey first: reconnects (up to 3 times, stopping once on 5 GHz) only when 5 GHz is close enough and the current channel is busy; tells you plainly when 5 GHz is too weak for a reconnect to help (`--force` to override, `--tries N` to change the count) |
 | `eduroam-boost watch` | Keep watching in the foreground; `--auto` to reconnect automatically, `--interval SECONDS` to change the check interval |
 | `eduroam-boost report` | Stats for the last 24 h (`--hours N`): time per band, latency, every boost's before/after, and **how long the improvement lasted** |
 | `eduroam-boost prefer-5g` | Windows only: set the driver's *Preferred Band* to 5 GHz, persists across reboots; `-Undo` restores the default |
 
 Suggested flow:
 
-1. Feels slow → run `eduroam-boost diagnose` to see whether Wi-Fi is the problem
-2. It is → `eduroam-boost boost` (on Windows, try `prefer-5g` first)
-3. After a few days → `eduroam-boost report` to see whether it actually helped
+1. Feels slow → `eduroam-boost diagnose` to see whether Wi-Fi is the problem
+2. It is → `eduroam-boost survey` to see how busy your channel is and how far behind 5 GHz is
+3. 5 GHz is close → `eduroam-boost boost`; far behind → `eduroam-boost seat` and move (on Windows, try `prefer-5g` first)
+4. After a few days → `eduroam-boost report` to see whether it actually helped
 
 Output follows your system language (Chinese or English); force one with `EDUROAM_BOOST_LANG=en` or `=zh`. Logs live in `~/Library/Logs/eduroam-boost/` on macOS and `%LOCALAPPDATA%\eduroam-boost\` on Windows.
 
@@ -141,30 +147,41 @@ flowchart TD
 
 **Why it happens:** a campus access point usually broadcasts on both 2.4 GHz and 5 GHz (newer ones on 6 GHz too). 2.4 GHz goes through walls better but has few channels and gets crowded; 5/6 GHz is much faster. Devices tend to stay on whatever band they joined first (the "sticky client" problem), even when a much better 5 GHz signal is right there.
 
-**How it decides:** it reads the system's Wi-Fi details (band, signal, whether a 5/6 GHz network of the same type is visible) and pings the default gateway to measure first-hop latency and loss. Only **measured symptoms** count as slow: latency over 100 ms or loss over 10%. Being on 2.4 GHz next to a 5 GHz network is only a hint, because a weak 5 GHz signal can be worse than a decent 2.4 GHz one (that happened in the [real-world test](#real-world-results)).
+**How it decides:** it reads the system's Wi-Fi details (band, signal) and pings the default gateway to measure first-hop latency and loss. With Location permission, the helper app also reads the **BSS Load** each AP advertises in its beacons (channel utilization, client count). That is the real reason 2.4 GHz is slow: a good signal doesn't help when the channel is busy 90% of the time. These are instantaneous values and vary from scan to scan. Only **measured symptoms** count as slow: latency over 100 ms or loss over 10%. Being on 2.4 GHz next to a 5 GHz network is only a hint, because a weak 5 GHz signal can be worse than a decent 2.4 GHz one (that happened in the [real-world test](#real-world-results)).
 
-**How it fixes:** macOS and iOS don't let you choose a band or a specific access point, but turning Wi-Fi off and on forces a fresh scan, which often lands on a better one. On Windows, most Wi-Fi drivers have a *Preferred Band* setting; setting it to 5 GHz is more thorough than reconnecting repeatedly.
+**How it fixes:** macOS picks access points mainly by signal strength, so it won't use a 5 GHz AP that is a few dB weaker, even when 2.4 GHz is saturated. macOS doesn't let you force a specific AP on username/password networks like eduroam (tested: without the credentials it ignores the request and picks by its own rules), so what actually works is **making 5 GHz look stronger to the Mac**: `seat` helps you find a spot where 5 GHz is at least as strong as 2.4 GHz, and macOS then stays on 5 GHz by itself. When 5 GHz is only a dB or two behind, a single `boost` reconnect often switches. On Windows, most Wi-Fi drivers have a *Preferred Band* setting; setting it to 5 GHz is more thorough than reconnecting repeatedly.
 
 **How it verifies:** every boost records before/after numbers, and the watcher keeps sampling, so `report` can compute the success rate, latency per band, and how long after each boost the connection got slow again.
 
 ## Real-world results
 
-A MacBook Pro on a US university's eduroam network, same spot, November 2026:
+A MacBook Pro on a US university's eduroam network, same seat, afternoon, November 2026.
 
-| Time | Band / signal | First hop (avg / max) | Loss |
-|---|---|---|---|
-| 13:28 | 2.4 GHz channel 6, -70 dBm | 72 ms / 230 ms | 0–10% |
-| 14:05 | 2.4 GHz channel 6, -73 dBm | **546 ms / 1544 ms** | 0% |
-| 14:14 (before boost) | 2.4 GHz, -69 dBm | 25 ms | 0% |
-| After 3 reconnects | still 2.4 GHz every time, -68 dBm | 10–43 ms | 0–10% |
+**Survey** (`eduroam-boost survey`, the three bands of the same AP):
+
+| Band | Channel | Signal | Channel utilization | Clients |
+|---|---|---|---|---|
+| 2.4 GHz (macOS's choice) | 6 | -68 to -71 dBm | **59–90%** | 2–5 |
+| 5 GHz | 157 (40 MHz) | -76 to -80 dBm | 15–39% | 15–17 |
+| 6 GHz | 149 (80 MHz) | -84 to -88 dBm | 0% | 3–5 |
+
+**How the two bands actually performed** (same AP, measured back to back):
+
+| | 2.4 GHz channel 6 | 5 GHz channel 157 |
+|---|---|---|
+| Download | **0.3–0.8 Mbps** | **about 50 Mbps** |
+| Loss | 3–6% | 0–1% |
+| Latency to the internet (median) | 60–120 ms | 60–120 ms (about the same) |
 
 To be honest about it:
 
-- **Boost could not move this spot to 5 GHz.** A same-type 5 GHz network was visible, but the Mac picked 2.4 GHz on all three reconnects. The 5 GHz signal there is weaker, so the Mac made the right call.
-- **The same access point swung from 10 ms to 1.5 s over the day.** That's mostly how crowded the AP was, not the band.
-- **This test improved the tool.** An early version reconnected whenever it saw "2.4 GHz with 5 GHz nearby", which meant three pointless Wi-Fi drops here. It now acts on latency and loss only.
+- **The root cause is a saturated 2.4 GHz channel**, with download speed a few percent of 5 GHz. Latency was similar on both; the whole campus network was slow that afternoon.
+- **5 GHz was only 5–11 dB weaker, and macOS stuck to 2.4 GHz** no matter how often it reconnected. That's why `seat` exists: move to where 5 GHz catches up.
+- **Turning off AWDL (AirDrop/Handoff) barely helped**: over 4 alternating rounds, spikes above 50 ms dropped from 37% to 26%, but the slowest latencies and loss didn't improve, so it isn't a feature (the test script is `tools/awdl-test.sh`).
+- **Forcing a specific AP doesn't work**: without the credentials, macOS ignores the request and picks by its own rules; all 3 attempts landed back on 2.4 GHz.
+- **The early "reconnect and hope" approach didn't help here**, and once dropped Wi-Fi 3 times while latency was fine. Boost now checks the survey first and skips reconnects that can't work.
 
-Longer-term watcher data (how long a fix lasts) will be added over time. You're welcome to share your campus's `eduroam-boost report` output in [Issues](https://github.com/LucasYanzy/eduroam-boost/issues).
+You're welcome to share your campus's `eduroam-boost survey` output in [Issues](https://github.com/LucasYanzy/eduroam-boost/issues).
 
 ## iPhone / iPad
 
@@ -194,7 +211,7 @@ Since Android 10, regular apps can neither toggle Wi-Fi nor choose an access poi
 
 - **No data collection, no uploads.** Everything is stored only on your own machine.
 - **Very little network traffic**: pings to your default gateway; `diagnose` also pings `1.1.1.1`.
-- **No network names needed.** macOS hides SSIDs without Location permission, and this tool doesn't use them.
+- **Location permission is only used to see access points.** macOS requires it to read network names and addresses, so `survey`/`seat` need it once; the helper app never reads your location. It is compiled from source on your machine (`macos-helper/main.swift`, under 200 lines) and makes no network requests.
 - **No changes to your network configuration.** On macOS it only turns Wi-Fi off and on; on Windows the adapter's *Preferred Band* changes only when you run `prefer-5g`, and `-Undo` restores it.
 - **Small enough to read.** The tool is one Python file and one PowerShell file; feel free to read them before installing.
 
@@ -219,9 +236,15 @@ Then it isn't your device or the Wi-Fi, and no tool on your computer can help. W
 </details>
 
 <details>
-<summary><b>Why not connect to a specific BSSID (one exact access point)?</b></summary>
+<summary><b>Why does it need Location permission?</b></summary>
 
-macOS and iOS don't allow command-line tools to do that (it needs Location permission and private APIs). This tool sticks to public, stable system features so OS updates are less likely to break it.
+Since macOS 14, apps without Location access can't see network names, AP addresses or the load APs advertise; scan results come back anonymized. The helper app uses the permission only for that, and never reads or stores your location. Without it, `status`, `diagnose`, `boost` and `watch` still work; only `survey` and `seat` don't.
+</details>
+
+<details>
+<summary><b>Why not just force the Mac onto the 5 GHz AP?</b></summary>
+
+We tried. Without your eduroam username and password, the macOS API ignores the requested AP and picks by its own rules (mostly signal strength). Reading your eduroam password is too sensitive, so this tool doesn't; instead it helps you find a spot where macOS chooses 5 GHz by itself.
 </details>
 
 <details>
@@ -250,7 +273,9 @@ irm https://raw.githubusercontent.com/LucasYanzy/eduroam-boost/main/windows/unin
 eduroam_boost.py        macOS CLI (standard library only)
 install.sh / uninstall.sh
 windows/                PowerShell port, installer/uninstaller, Pester tests
+macos-helper/           helper app (Swift): Location permission, per-AP load scanning
 ios/                    iPhone Shortcut and the script that builds it
+tools/                  experiments (e.g. the AWDL A/B test)
 tests/                  macOS unit and installer tests
 ```
 
@@ -258,6 +283,7 @@ tests/                  macOS unit and installer tests
 python3 -m unittest discover -s tests -v                  # macOS: unit + install/uninstall tests (all in temp dirs)
 pwsh -c "Invoke-Pester windows/tests -Output Detailed"    # Windows: parser tests
 python3 ios/build_shortcut.py                             # rebuild and sign the Shortcut (needs macOS)
+./macos-helper/build.sh                                   # build the helper app (needs Xcode Command Line Tools) into build/
 ```
 
 CI runs on macOS, Windows and Linux (shellcheck) for every push. Contributions especially welcome:
