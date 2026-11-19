@@ -118,6 +118,7 @@ class BoostTests(unittest.TestCase):
         self.tmp = tempfile.mkdtemp()
         self.patches = [mock.patch.object(eb, "DATA_DIR", self.tmp),
                         mock.patch.object(eb, "wifi_device", return_value="en0"),
+                        mock.patch.object(eb, "survey", return_value=None),
                         mock.patch.object(eb.time, "sleep")]
         for p in self.patches:
             p.start()
@@ -170,7 +171,7 @@ class CliTests(unittest.TestCase):
 @unittest.skipUnless(sys.platform == "darwin", "installer is macOS-only")
 class InstallerTests(unittest.TestCase):
     def run_sh(self, script, home, *args, stdin=None):
-        env = {**os.environ, "HOME": home, "EDUROAM_BOOST_DRY_RUN": "1"}
+        env = {**os.environ, "HOME": home, "EDUROAM_BOOST_DRY_RUN": "1", "EDUROAM_BOOST_SKIP_HELPER": "1"}
         return subprocess.run(["bash", os.path.join(ROOT, script), *args], env=env, input=stdin,
                               capture_output=True, text=True, check=True)
 
@@ -188,11 +189,99 @@ class InstallerTests(unittest.TestCase):
 
     def test_curl_pipe_install_without_watch(self):
         home = tempfile.mkdtemp()
-        env = {**os.environ, "HOME": home, "EDUROAM_BOOST_DRY_RUN": "1", "EDUROAM_BOOST_RAW": "file://" + ROOT}
+        env = {**os.environ, "HOME": home, "EDUROAM_BOOST_DRY_RUN": "1", "EDUROAM_BOOST_SKIP_HELPER": "1",
+               "EDUROAM_BOOST_RAW": "file://" + ROOT}
         with open(os.path.join(ROOT, "install.sh")) as fh:
             subprocess.run(["bash", "-s", "--", "--no-watch"], stdin=fh, env=env, check=True, capture_output=True)
         self.assertTrue(os.path.exists(os.path.join(home, ".local/share/eduroam-boost/eduroam_boost.py")))
         self.assertFalse(os.path.exists(os.path.join(home, "Library/LaunchAgents")))
+
+
+def ap(band, ch, rssi, bssid, util=None, sta=None, ssid="eduroam"):
+    n = {"ssid": ssid, "bssid": bssid, "band": band, "channel": ch, "width_mhz": 20 if band == "2.4GHz" else 40,
+         "rssi": rssi, "noise": -94, "enterprise": True}
+    if util is not None:
+        n["load"] = {"utilization_pct": util, "stations": sta}
+    return n
+
+
+def scan_of(cur_band, cur_rssi, cur_bssid, networks):
+    return {"location": "authorized", "current": {"ssid": "eduroam", "bssid": cur_bssid, "band": cur_band,
+                                                  "rssi": cur_rssi, "channel": 6}, "networks": networks}
+
+
+# Real scan from the field test (BSSIDs shortened): busy 2.4 GHz, 5 GHz 5 dB weaker, 6 GHz weak.
+FIELD = scan_of("2.4GHz", -71, "b2:e6", [
+    ap("2.4GHz", 6, -71, "b2:e6", 90, 2), ap("5GHz", 157, -76, "b2:d6", 39, 17),
+    ap("2.4GHz", 11, -76, "d1:e6", 74, 6), ap("6GHz", 149, -84, "b2:c2", 0, 3),
+    ap("5GHz", 100, -88, "d1:d6", 11, 8), ap("5GHz", 149, -63, "96:07", ssid="iPhone")])
+
+
+class AnalyzeTests(unittest.TestCase):
+    def test_field_scan_is_fast_weak_and_busy(self):
+        a = eb.analyze(FIELD)
+        self.assertEqual(a["verdict"], "fast_weak")
+        self.assertEqual((a["util"], a["stations"], a["busy"], a["gap"]), (90, 2, True, -5))
+        self.assertEqual(a["best_fast"]["bssid"], "b2:d6")        # not the stronger personal hotspot
+        self.assertEqual(len(a["aps"]), 5)
+
+    def test_close_fast_band(self):
+        s = scan_of("2.4GHz", -71, "x", [ap("2.4GHz", 6, -71, "x", 90, 2), ap("5GHz", 157, -73, "y", 30, 5)])
+        a = eb.analyze(s)
+        self.assertEqual((a["verdict"], a["gap"]), ("fast_close", -2))
+
+    def test_on_fast_and_no_fast_and_hidden(self):
+        self.assertEqual(eb.analyze(scan_of("5GHz", -60, "y", [ap("5GHz", 36, -60, "y")]))["verdict"], "on_fast")
+        self.assertEqual(eb.analyze(scan_of("2.4GHz", -60, "x", [ap("2.4GHz", 6, -60, "x")]))["verdict"], "no_fast")
+        self.assertEqual(eb.analyze({"current": {"ssid": None}})["verdict"], "no_names")
+        self.assertEqual(eb.analyze(None)["verdict"], "no_names")
+
+    def test_explain_mentions_next_step(self):
+        self.assertIn("seat", eb.explain(eb.analyze(FIELD)))
+        self.assertIn("authorize", eb.explain({"verdict": "no_names"}))
+
+    def test_seat_line(self):
+        weak = eb.seat_line(eb.analyze(FIELD))
+        self.assertIn("-5 dB", weak)
+        self.assertIn("█", weak)
+        good = scan_of("2.4GHz", -72, "x", [ap("2.4GHz", 6, -72, "x"), ap("5GHz", 157, -70, "y")])
+        self.assertIn("boost", eb.seat_line(eb.analyze(good)))
+
+
+class SurveyBoostTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.patches = [mock.patch.object(eb, "DATA_DIR", self.tmp),
+                        mock.patch.object(eb, "wifi_device", return_value="en0"),
+                        mock.patch.object(eb.time, "sleep")]
+        for p in self.patches:
+            p.start()
+
+    def tearDown(self):
+        for p in self.patches:
+            p.stop()
+
+    def test_does_not_reconnect_when_5ghz_too_weak(self):
+        with mock.patch.object(eb, "survey", return_value=eb.analyze(FIELD)), \
+                mock.patch.object(eb, "measure", return_value=sample("2.4GHz", 500)), \
+                mock.patch.object(eb, "reconnect") as rc:
+            _, _, ok = eb.do_boost(verbose=False)
+        rc.assert_not_called()
+        self.assertFalse(ok)
+
+    def test_busy_channel_with_close_5ghz_reconnects_until_on_5ghz(self):
+        close = eb.analyze(scan_of("2.4GHz", -71, "x", [ap("2.4GHz", 6, -71, "x", 90, 2), ap("5GHz", 157, -73, "y", 30, 5)]))
+        seq = [sample("2.4GHz", 20), sample("2.4GHz", 15), sample("5GHz", 25)]   # latency fine, but channel 90% busy
+        with mock.patch.object(eb, "survey", return_value=close), mock.patch.object(eb, "measure", side_effect=seq), \
+                mock.patch.object(eb, "reconnect", return_value=True) as rc:
+            _, best, ok = eb.do_boost(verbose=False)
+        self.assertTrue(ok)
+        self.assertEqual(rc.call_count, 2)
+        self.assertEqual(best["link"]["band"], "5GHz")
+
+    def test_no_helper_falls_back_to_latency_rule(self):
+        with mock.patch.object(eb, "helper_app", return_value=None):
+            self.assertIsNone(eb.survey())
 
 
 if __name__ == "__main__":

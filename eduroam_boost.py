@@ -9,6 +9,9 @@ off/on forces a fresh scan, which usually lands on a faster band.
 
 Commands:
   status      current band / signal / first-hop latency, with a diagnosis (default)
+  authorize   one-time Location permission for the helper app (needed by survey / seat)
+  survey      every access point of this network: band, signal, channel utilization, clients
+  seat        live 5 GHz vs 2.4 GHz signal gap while you move, to find a spot where 5 GHz wins
   diagnose    20 s test: is the bottleneck the Wi-Fi hop or the network upstream?
   boost       reconnect Wi-Fi (up to --tries times) until it is on 5/6 GHz and fast
   watch       sample every --interval s; notify (or --auto reconnect) when it degrades
@@ -26,7 +29,7 @@ import sys
 import time
 from datetime import datetime, timedelta
 
-VERSION = "0.1.0"
+VERSION = "0.2.0"
 DATA_DIR = os.environ.get("EDUROAM_BOOST_HOME", os.path.expanduser("~/Library/Logs/eduroam-boost"))
 SAMPLES = "samples.jsonl"
 BOOSTS = "boosts.jsonl"
@@ -229,6 +232,128 @@ def load(name, since=None):
     return rows
 
 
+# ---------------------------------------------------------------- access-point survey (helper app)
+#
+# macOS only reveals network names, BSSIDs and the APs' advertised load to apps with Location
+# permission, so a tiny helper app (macos-helper/) does the scanning. We talk to it through files.
+
+CLOSE_DB = 4        # a 5/6 GHz AP within this many dB of the current one: macOS may pick it on reconnect
+BUSY_PCT = 70       # channel utilization at or above this counts as congested
+
+
+def helper_app():
+    here = os.path.dirname(os.path.realpath(__file__))
+    for cand in (os.environ.get("EDUROAM_BOOST_HELPER"), os.path.join(here, "eduroam-boost-helper.app"),
+                 os.path.join(here, "build", "eduroam-boost-helper.app")):
+        if cand and os.path.isdir(cand):
+            return cand
+    return None
+
+
+def helper(command, *extra, timeout=90):
+    """Run one helper command and return its JSON output (dict), or None if unavailable."""
+    app = helper_app()
+    if not app:
+        return None
+    import tempfile
+    fd, out = tempfile.mkstemp(prefix="eduroam-boost-", suffix=".json")
+    os.close(fd)
+    os.unlink(out)
+    try:
+        sh(["open", "-n", app, "--args", command, *extra, "--out", out], 15)
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            if os.path.exists(out) and os.path.getsize(out) > 0:
+                time.sleep(0.1)
+                with open(out) as fh:
+                    return json.load(fh)
+            time.sleep(0.25)
+        return None
+    except ValueError:
+        return None
+    finally:
+        if os.path.exists(out):
+            os.unlink(out)
+
+
+def helper_watch(interval=4, duration=600):
+    """Yield one scan dict at a time from the helper's streaming mode."""
+    app = helper_app()
+    if not app:
+        return
+    import tempfile
+    fd, out = tempfile.mkstemp(prefix="eduroam-boost-watch-", suffix=".jsonl")
+    os.close(fd)
+    os.unlink(out)
+    sh(["open", "-n", app, "--args", "watch", "--interval", str(interval), "--duration", str(duration), "--out", out], 15)
+    pos = 0
+    try:
+        deadline = time.time() + duration + 30
+        while time.time() < deadline:
+            if os.path.exists(out):
+                with open(out) as fh:
+                    fh.seek(pos)
+                    chunk = fh.read()
+                    complete = chunk[:chunk.rfind("\n") + 1]
+                    pos += len(complete.encode())
+                for line in complete.splitlines():
+                    try:
+                        yield json.loads(line)
+                    except ValueError:
+                        pass
+            time.sleep(0.5)
+    finally:
+        open(out + ".stop", "w").close()
+
+
+def analyze(scan):
+    """Pure function: what does the scan say about the current connection? Returns a dict."""
+    if not scan or not (scan.get("current") or {}).get("ssid"):
+        return {"verdict": "no_names"}
+    cur = scan["current"]
+    aps = [n for n in scan.get("networks", []) if n.get("ssid") == cur["ssid"]]
+    here = next((n for n in aps if n.get("bssid") == cur.get("bssid")), None)
+    fast = [n for n in aps if n.get("band") in ("5GHz", "6GHz")]
+    best_fast = max(fast, key=lambda n: n["rssi"], default=None)
+    util = ((here or {}).get("load") or {}).get("utilization_pct")
+    out = {"ssid": cur["ssid"], "band": cur.get("band"), "rssi": cur.get("rssi"), "channel": cur.get("channel"),
+           "util": util, "stations": ((here or {}).get("load") or {}).get("stations"),
+           "busy": util is not None and util >= BUSY_PCT, "aps": aps, "best_fast": best_fast, "gap": None}
+    if cur.get("band") in ("5GHz", "6GHz"):
+        out["verdict"] = "on_fast"
+    elif not best_fast:
+        out["verdict"] = "no_fast"
+    else:
+        out["gap"] = best_fast["rssi"] - cur["rssi"]
+        out["verdict"] = "fast_close" if out["gap"] >= -CLOSE_DB else "fast_weak"
+    return out
+
+
+def explain(a):
+    """One or two human sentences for an analysis."""
+    v = a["verdict"]
+    if v == "no_names":
+        return t("看不到热点详情：先运行 eduroam-boost authorize 授权定位（只用来读取热点名称和负载）。",
+                 "Access-point details hidden: run `eduroam-boost authorize` once (Location is only used to read AP names and load).")
+    busy = t(f"当前信道占用 {a['util']}%", f"current channel {a['util']}% busy") if a.get("util") is not None else ""
+    if v == "on_fast":
+        return t(f"已经在 {a['band']} 上了。", f"Already on {a['band']}.") + (f" {busy}" if busy else "")
+    if v == "no_fast":
+        return t("附近没有这个网络的 5/6GHz 热点，换频段这条路走不通。", "No 5/6 GHz AP of this network nearby; switching bands is not an option here.")
+    bf = a["best_fast"]
+    load = (bf.get("load") or {})
+    bf_desc = f"{bf['band']} ch{bf['channel']} {bf['rssi']}dBm" + (t(f"，占用 {load['utilization_pct']}%", f", {load['utilization_pct']}% busy") if "utilization_pct" in load else "")
+    if v == "fast_close":
+        return t(f"{bf_desc}，只比现在弱 {-a['gap']} dB：重连很可能换过去，运行 eduroam-boost boost。",
+                 f"{bf_desc}, only {-a['gap']} dB weaker: a reconnect will likely switch to it. Run `eduroam-boost boost`.") + (f" ({busy})" if busy else "")
+    return t(f"{bf_desc}，比现在弱 {-a['gap']} dB：重连 Mac 也不会换过去。用 eduroam-boost seat 找一个 5GHz 更强的位置。",
+             f"{bf_desc}, {-a['gap']} dB weaker: macOS won't switch to it. Use `eduroam-boost seat` to find a spot where it is stronger.") + (f" ({busy})" if busy else "")
+
+
+def survey():
+    return analyze(helper("scan")) if helper_app() else None
+
+
 # ---------------------------------------------------------------- actions
 
 def reconnect(device, wait=40):
@@ -250,14 +375,26 @@ def notify(title, msg):
     sh(["osascript", "-e", f'display notification "{msg}" with title "{title}"'], 10)
 
 
-def do_boost(tries=3, force=False, trigger="manual", verbose=True):
+def do_boost(tries=3, force=False, trigger="manual", verbose=True, use_survey=True):
     say = print if verbose else (lambda *a, **k: None)
     device = wifi_device()
     before = measure()
     say(t("重连前: ", "before: ") + describe(before))
-    if not force and not is_bad(before):
+    an = survey() if use_survey else None
+    if an and an["verdict"] != "no_names":
+        say(t("热点: ", "APs:   ") + explain(an))
+    if an and an["verdict"] == "fast_weak" and not force:
+        say(t("不重连：重连了也还是这台 2.4GHz（加 --force 仍可强制）。", "Not reconnecting: it would land on the same 2.4 GHz AP (use --force anyway)."))
+        return before, before, False
+    want_fast = bool(an and an["verdict"] == "fast_close")
+    worth = is_bad(before) or (want_fast and an["busy"])
+    if not force and not worth:
         say(t("现在已经不错了，不需要重连（加 --force 强制）。", "Already good, nothing to do (use --force to reconnect anyway)."))
         return before, before, True
+
+    def good(s):
+        return not is_bad(s) and (not want_fast or (s.get("link") or {}).get("band") in ("5GHz", "6GHz"))
+
     best = before
     attempts = 0
     for i in range(1, tries + 1):
@@ -271,18 +408,18 @@ def do_boost(tries=3, force=False, trigger="manual", verbose=True):
         say("  " + describe(after))
         if score(after) < score(best):
             best = after
-        if not is_bad(after):
+        if good(after):
             break
-    ok = not is_bad(best)
+    ok = good(best)
     append(BOOSTS, {"ts": before["ts"], "trigger": trigger, "tries": attempts, "success": ok, "before": before, "after": best})
-    if ok and band_hint(best):
-        say(t(f"✅ 延迟正常: {describe(best)}。还是 2.4GHz，说明这里 5GHz 信号更弱，Mac 选得没错。",
-              f"✅ latency is fine: {describe(best)}. Still 2.4 GHz, so the faster band is weaker here; that is the right choice."))
-    elif ok:
-        say(t(f"✅ 好了: {describe(best)}", f"✅ done: {describe(best)}"))
+    if ok:
+        say(t(f"成功: {describe(best)}", f"done: {describe(best)}"))
+    elif want_fast and not is_bad(best):
+        say(t("没换到 5/6GHz（Mac 还是选了信号更强的 2.4GHz），延迟本身还可以。用 eduroam-boost seat 找个 5GHz 更强的位置。",
+              "Did not switch to 5/6 GHz (macOS kept the stronger 2.4 GHz AP); latency is OK. Use `eduroam-boost seat` to find a better spot."))
     else:
-        say(t("❌ 还是在 2.4GHz 或很卡：这里 5GHz 信号太弱，软件帮不上了。换个离 AP 近的位置、用手机热点或插网线。",
-              "❌ Still slow / on 2.4 GHz: the faster band is too weak here. Move closer to an AP, tether, or use Ethernet."))
+        say(t("还是慢：这里 5GHz 信号太弱或 AP 太挤，软件帮不上了。用 eduroam-boost seat 找位置、用手机热点或插网线。",
+              "Still slow: the faster band is too weak here or the AP is overloaded. Try `eduroam-boost seat`, tethering, or Ethernet."))
     return before, best, ok
 
 
@@ -301,11 +438,20 @@ def cmd_status(args):
     print(t("到路由器", "Router") + f" {gw}, " + t(f"丢包 {s['gw_loss']:.0f}%", f"loss {s['gw_loss']:.0f}%"))
     if link["fast_nearby"]:
         print(t("附近 5/6GHz 同类网络: ", "Faster same-type networks nearby: ") + ", ".join(link["fast_nearby"]))
+    a = survey()
+    if a and a["verdict"] != "no_names":
+        here = t(f"这台 AP: 信道占用 {a['util']}%，{a['stations']} 台设备", f"This AP: {a['util']}% channel busy, {a['stations']} clients") if a.get("util") is not None else ""
+        if here:
+            print(here)
+        print(t("热点: ", "APs: ") + explain(a))
     r = reasons(s)
     hint = band_hint(s)
     if r:
         print("\n" + t("诊断: 连接差 — ", "Diagnosis: slow — ") + "; ".join(r + ([hint] if hint else [])))
-        print(t("建议: eduroam-boost boost", "Try:  eduroam-boost boost"))
+        if a and a["verdict"] == "fast_weak":
+            print(t("建议: eduroam-boost seat（这里重连换不到 5GHz）", "Try:  eduroam-boost seat (reconnecting won't reach 5 GHz here)"))
+        else:
+            print(t("建议: eduroam-boost boost", "Try:  eduroam-boost boost"))
     elif hint:
         print("\n" + t(f"诊断: 延迟正常（{hint}，但现在不需要处理）", f"Diagnosis: fine ({hint}, but nothing to fix right now)"))
     else:
@@ -417,6 +563,85 @@ def cmd_report(args):
     return 0
 
 
+def cmd_authorize(args):
+    if not helper_app():
+        print(t("没找到辅助 App。重新运行安装脚本（需要 Xcode 命令行工具：xcode-select --install）。",
+                "Helper app not found. Re-run the installer (needs Xcode Command Line Tools: xcode-select --install)."))
+        return 1
+    print(t("会弹出定位授权窗口，请点「允许」。只用来读取热点名称和负载，不读取位置。",
+            "A Location prompt will appear; click Allow. It is only used to read AP names and load, never your location."), flush=True)
+    r = helper("authorize", timeout=200) or {}
+    if r.get("location") == "authorized":
+        print(t("已授权。现在可以用 eduroam-boost survey 和 seat 了。", "Authorized. `eduroam-boost survey` and `seat` are ready."))
+        return 0
+    print(t("没有授权。可以在「系统设置 → 隐私与安全性 → 定位服务」里打开 eduroam-boost。",
+            "Not authorized. You can enable eduroam-boost in System Settings → Privacy & Security → Location Services."))
+    return 3
+
+
+def ap_row(n, current_bssid=None):
+    load = n.get("load") or {}
+    util = f"{load['utilization_pct']}%" if "utilization_pct" in load else "—"
+    sta = str(load["stations"]) if "stations" in load else "—"
+    mark = t("  ← 当前", "  ← current") if current_bssid and n.get("bssid") == current_bssid else ""
+    return f"  {n['band']:>6} {n['channel']:>4} {str(n['width_mhz']) + 'MHz':>7} {n['rssi']:>5} dBm {util:>6} {sta:>5}{mark}"
+
+
+def cmd_survey(args):
+    if not helper_app():
+        return cmd_authorize(args)
+    scan = helper("scan")
+    a = analyze(scan)
+    if a["verdict"] == "no_names":
+        print(explain(a))
+        return 3
+    cur = scan["current"]
+    rows = a["aps"] if not args.all else [n for n in scan["networks"] if n.get("ssid")]
+    print(t(f"网络 {a['ssid']}：附近 {len(a['aps'])} 个热点", f"Network {a['ssid']}: {len(a['aps'])} access points nearby"))
+    print(t("    频段 信道    带宽    信号       占用  设备", "    band   ch   width  signal      busy   sta"))
+    for n in sorted(rows, key=lambda n: (n.get("ssid") != a["ssid"], -n["rssi"])):
+        prefix = "" if n.get("ssid") == a["ssid"] else f"  [{n['ssid']}]"
+        print(ap_row(n, cur.get("bssid")) + prefix)
+    print("\n" + explain(a))
+    if args.json:
+        print(json.dumps(a, ensure_ascii=False))
+    return 0
+
+
+def seat_line(a, width=20):
+    """Pure function: one status line for seat mode."""
+    if a["verdict"] == "no_names":
+        return explain(a)
+    if a["verdict"] == "on_fast":
+        util = f" {a['util']}%" if a.get("util") is not None else ""
+        return t(f"已在 {a['band']} ({a['rssi']}dBm{util})，就是这里", f"on {a['band']} ({a['rssi']}dBm{util}), this spot works")
+    if a["verdict"] == "no_fast":
+        return t(f"2.4GHz {a['rssi']}dBm，附近看不到 5/6GHz", f"2.4GHz {a['rssi']}dBm, no 5/6 GHz in range")
+    gap = a["gap"]
+    filled = max(0, min(width, round((gap + 15) / 20 * width)))      # -15 dB .. +5 dB
+    bar = "█" * filled + "·" * (width - filled)
+    bf = a["best_fast"]
+    head = f"2.4GHz {a['rssi']} | {bf['band']} ch{bf['channel']} {bf['rssi']} | {gap:+d} dB [{bar}] "
+    if gap >= 0:
+        return head + t("5GHz 够强了，运行 eduroam-boost boost", "5 GHz is strong enough: run eduroam-boost boost")
+    if gap >= -CLOSE_DB:
+        return head + t(f"接近了，再强 {-gap} dB 更稳", f"close; {-gap} dB more to be sure")
+    return head + t(f"还差 {-gap} dB，往 AP 方向挪", f"{-gap} dB short; move towards the AP")
+
+
+def cmd_seat(args):
+    if not helper_app():
+        return cmd_authorize(args)
+    print(t("找座位模式：拿着电脑慢慢换位置，看 5GHz 和 2.4GHz 的信号差。Ctrl+C 结束。",
+            "Seat finder: move around with the laptop and watch the 5 GHz vs 2.4 GHz gap. Ctrl+C to stop."), flush=True)
+    for scan in helper_watch(args.interval, args.minutes * 60):
+        a = analyze(scan)
+        print(datetime.now().strftime("%H:%M:%S ") + seat_line(a), flush=True)
+        if a["verdict"] == "no_names":
+            return 3
+    return 0
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(prog="eduroam-boost", description=__doc__.split("\n\n")[0])
     p.add_argument("--version", action="version", version=VERSION)
@@ -431,13 +656,21 @@ def main(argv=None):
     w.add_argument("--interval", type=int, default=30)
     w.add_argument("--auto", action="store_true")
     w.add_argument("--tries", type=int, default=2)
+    sub.add_parser("authorize")
+    sv = sub.add_parser("survey")
+    sv.add_argument("--all", action="store_true")
+    sv.add_argument("--json", action="store_true")
+    st = sub.add_parser("seat")
+    st.add_argument("--interval", type=int, default=4)
+    st.add_argument("--minutes", type=int, default=10)
     r = sub.add_parser("report")
     r.add_argument("--hours", type=float, default=24)
     args = p.parse_args(argv)
     if sys.platform != "darwin":
         print(t("这个命令行工具只支持 macOS；iPhone/Android 见 README。", "This CLI is macOS-only; see the README for iPhone/Android."))
         return 1
-    handlers = {"status": cmd_status, "diagnose": cmd_diagnose, "boost": cmd_boost, "watch": cmd_watch, "report": cmd_report}
+    handlers = {"status": cmd_status, "diagnose": cmd_diagnose, "boost": cmd_boost, "watch": cmd_watch, "report": cmd_report,
+                "authorize": cmd_authorize, "survey": cmd_survey, "seat": cmd_seat}
     if not args.cmd:
         args = p.parse_args(["status"])
     try:

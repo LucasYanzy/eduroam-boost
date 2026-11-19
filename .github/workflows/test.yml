@@ -16,6 +16,10 @@ jobs:
         run: |
           python3 eduroam_boost.py --version
           python3 eduroam_boost.py report
+      - name: Helper app builds and is signed
+        run: |
+          ./macos-helper/build.sh "$RUNNER_TEMP"
+          codesign -dv "$RUNNER_TEMP/eduroam-boost-helper.app" 2>&1 | grep -q "io.github.lucasyanzy.eduroam-boost.helper"
       - name: Shortcut is a signed archive
         run: test "$(head -c 4 ios/eduroam-Boost.shortcut)" = "AEA1"
 

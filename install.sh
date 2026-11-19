@@ -55,6 +55,24 @@ else
 fi
 "$PY" -m py_compile "$SHARE/eduroam_boost.py"
 
+# Helper app for survey / seat (needs swiftc from the Xcode Command Line Tools, which python3 needs anyway)
+if [ -z "${EDUROAM_BOOST_SKIP_HELPER:-}" ] && command -v swiftc >/dev/null 2>&1; then
+  HSRC="$(mktemp -d)"
+  if [ -n "$SRC_DIR" ] && [ -f "$SRC_DIR/macos-helper/main.swift" ]; then
+    cp "$SRC_DIR/macos-helper/main.swift" "$SRC_DIR/macos-helper/build.sh" "$HSRC/"
+  else
+    curl -fsSL "$RAW/macos-helper/main.swift" -o "$HSRC/main.swift"
+    curl -fsSL "$RAW/macos-helper/build.sh" -o "$HSRC/build.sh"
+  fi
+  if bash "$HSRC/build.sh" "$SHARE" >/dev/null 2>"$HSRC/build.log"; then
+    say "✓ helper app built (run 'eduroam-boost authorize' once to enable survey / seat)"
+  else
+    say "  helper app build failed; survey / seat unavailable (see $HSRC/build.log)"
+  fi
+else
+  say "  swiftc not found: survey / seat unavailable (install with: xcode-select --install)"
+fi
+
 cat > "$BIN/eduroam-boost" <<EOF
 #!/bin/sh
 exec "$PY" "$SHARE/eduroam_boost.py" "\$@"
