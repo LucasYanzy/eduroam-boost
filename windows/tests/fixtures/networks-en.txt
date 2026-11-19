@@ -1,0 +1,27 @@
+
+Interface name : Wi-Fi
+There are 2 networks currently visible.
+
+SSID 1 : eduroam
+    Network type            : Infrastructure
+    Authentication          : WPA2-Enterprise
+    Encryption              : CCMP
+    BSSID 1                 : 11:22:33:44:55:66
+         Signal             : 52%
+         Radio type         : 802.11ax
+         Band               : 2.4 GHz
+         Channel            : 6
+    BSSID 2                 : 11:22:33:44:55:67
+         Signal             : 40%
+         Radio type         : 802.11ax
+         Band               : 5 GHz
+         Channel            : 157
+SSID 2 : CoffeeShop
+    Network type            : Infrastructure
+    Authentication          : WPA2-Personal
+    Encryption              : CCMP
+    BSSID 1                 : aa:aa:aa:aa:aa:aa
+         Signal             : 80%
+         Radio type         : 802.11ac
+         Band               : 5 GHz
+         Channel            : 36
