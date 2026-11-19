@@ -152,15 +152,22 @@ def measure(count=10):
 
 # ---------------------------------------------------------------- judgement
 
+def band_hint(s):
+    """Advisory only: on 2.4 GHz while a faster band is visible. Not a reason to reconnect by itself,
+    because a weak 5 GHz signal can be worse than a decent 2.4 GHz one (seen in real tests)."""
+    link = s.get("link") or {}
+    if link.get("band") == "2.4GHz" and link.get("fast_nearby"):
+        return t("连在 2.4GHz，附近有 5/6GHz 的同类网络", "on 2.4 GHz while a 5/6 GHz network of the same type is nearby")
+    return None
+
+
 def reasons(s):
-    """Why a sample counts as bad (empty list = fine)."""
+    """Why a sample counts as slow (empty list = fine). Only measured symptoms count."""
     out = []
     link = s.get("link")
     if not link:
         return [t("没连上 Wi-Fi", "not connected to Wi-Fi")]
-    if link["band"] == "2.4GHz" and link["fast_nearby"]:
-        out.append(t("连在 2.4GHz，但附近有 5/6GHz 的同类网络", "on 2.4 GHz although a 5/6 GHz network of the same type is nearby"))
-    if s.get("gw_ms") is not None and s["gw_ms"] > BAD_GW_MS:
+    if s.get("gw_ms") is not None and s["gw_ms"] > BAD_GW_MS:  # no answer at all shows up as 100% loss
         out.append(t(f"到路由器平均 {s['gw_ms']:.0f}ms（>{BAD_GW_MS}）", f"first hop averages {s['gw_ms']:.0f} ms (>{BAD_GW_MS})"))
     if s.get("gw_loss", 0) > BAD_LOSS:
         out.append(t(f"到路由器丢包 {s['gw_loss']:.0f}%", f"{s['gw_loss']:.0f}% packet loss on the first hop"))
@@ -184,7 +191,8 @@ def describe(s):
     if not link:
         return t("未连接", "disconnected")
     gw = "—" if s.get("gw_ms") is None else f"{s['gw_ms']:.0f}ms"
-    return f"{link['band']} {link['rssi']}dBm {link['rate']}Mbps | " + t(f"路由器 {gw} 丢包 {s['gw_loss']:.0f}%", f"router {gw} loss {s['gw_loss']:.0f}%")
+    rate = f"{link['rate']}Mbps" if link.get("rate") else "—Mbps"  # macOS reports 0 right after (re)joining
+    return f"{link['band']} {link['rssi']}dBm {rate} | " + t(f"路由器 {gw} 丢包 {s['gw_loss']:.0f}%", f"router {gw} loss {s['gw_loss']:.0f}%")
 
 
 # ---------------------------------------------------------------- storage
@@ -267,7 +275,10 @@ def do_boost(tries=3, force=False, trigger="manual", verbose=True):
             break
     ok = not is_bad(best)
     append(BOOSTS, {"ts": before["ts"], "trigger": trigger, "tries": attempts, "success": ok, "before": before, "after": best})
-    if ok:
+    if ok and band_hint(best):
+        say(t(f"✅ 延迟正常: {describe(best)}。还是 2.4GHz，说明这里 5GHz 信号更弱，Mac 选得没错。",
+              f"✅ latency is fine: {describe(best)}. Still 2.4 GHz, so the faster band is weaker here; that is the right choice."))
+    elif ok:
         say(t(f"✅ 好了: {describe(best)}", f"✅ done: {describe(best)}"))
     else:
         say(t("❌ 还是在 2.4GHz 或很卡：这里 5GHz 信号太弱，软件帮不上了。换个离 AP 近的位置、用手机热点或插网线。",
@@ -285,15 +296,18 @@ def cmd_status(args):
         return 1
     print(t("频段", "Band") + f"     {link['band']}   {link['channel']}")
     print(t("信号", "Signal") + f"   {link['rssi']} dBm" + (t(f"（噪声 {link['noise']} dBm）", f" (noise {link['noise']} dBm)") if link["noise"] else ""))
-    print(t("速率", "Rate") + f"     {link['rate']} Mbps")
+    print(t("速率", "Rate") + f"     {link['rate'] or '—'} Mbps")
     gw = "—" if s["gw_ms"] is None else f"{s['gw_ms']:.0f} ms"
     print(t("到路由器", "Router") + f" {gw}, " + t(f"丢包 {s['gw_loss']:.0f}%", f"loss {s['gw_loss']:.0f}%"))
     if link["fast_nearby"]:
         print(t("附近 5/6GHz 同类网络: ", "Faster same-type networks nearby: ") + ", ".join(link["fast_nearby"]))
     r = reasons(s)
+    hint = band_hint(s)
     if r:
-        print("\n" + t("诊断: 连接差 — ", "Diagnosis: slow — ") + "; ".join(r))
+        print("\n" + t("诊断: 连接差 — ", "Diagnosis: slow — ") + "; ".join(r + ([hint] if hint else [])))
         print(t("建议: eduroam-boost boost", "Try:  eduroam-boost boost"))
+    elif hint:
+        print("\n" + t(f"诊断: 延迟正常（{hint}，但现在不需要处理）", f"Diagnosis: fine ({hint}, but nothing to fix right now)"))
     else:
         print("\n" + t("诊断: 正常", "Diagnosis: fine"))
     if args.json:

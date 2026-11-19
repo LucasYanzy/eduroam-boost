@@ -40,7 +40,8 @@ function Split-NetshLines([string]$Text) {
     # netsh prints "    Key      : Value". Keys are localized, so callers match values where possible.
     $pairs = @()
     foreach ($line in ($Text -split "`r?`n")) {
-        $m = [regex]::Match($line, '^\s+(.+?)\s+:\s?(.*)$')
+        # Leading whitespace is optional: "SSID 1 : name" starts at column 0 in `show networks`.
+        $m = [regex]::Match($line, '^\s*(.+?)\s+:\s?(.*)$')
         if ($m.Success) { $pairs += [pscustomobject]@{ Key = $m.Groups[1].Value.Trim(); Value = $m.Groups[2].Value.Trim() } }
     }
     $pairs
@@ -114,10 +115,18 @@ function Get-FastNearby($Link, $Networks) {
         })
 }
 
+function Get-BandHint($Sample) {
+    # Advisory only: a weak 5 GHz signal can be worse than a decent 2.4 GHz one, so this alone never triggers a reconnect.
+    if ($Sample.Link -and $Sample.Link.Band -eq '2.4GHz' -and $Sample.FastNearby -gt 0) {
+        return (T '连在 2.4GHz，附近有同名 5/6GHz 热点' 'on 2.4 GHz while the same network is available on 5/6 GHz')
+    }
+    $null
+}
+
 function Get-Reasons($Sample) {
+    # Only measured symptoms count as "slow".
     $r = @()
     if (-not $Sample.Link) { return @(T '没连上 Wi-Fi' 'not connected to Wi-Fi') }
-    if ($Sample.Link.Band -eq '2.4GHz' -and $Sample.FastNearby -gt 0) { $r += (T '连在 2.4GHz，但附近有同名 5/6GHz 热点' 'on 2.4 GHz although the same network is available on 5/6 GHz') }
     if ($null -ne $Sample.GwMs -and $Sample.GwMs -gt $Script:BadGwMs) { $r += (T ("到路由器平均 {0:N0}ms" -f $Sample.GwMs) ("first hop averages {0:N0} ms" -f $Sample.GwMs)) }
     if ($Sample.GwLoss -gt $Script:BadLoss) { $r += (T ("到路由器丢包 {0:N0}%" -f $Sample.GwLoss) ("{0:N0}% first-hop loss" -f $Sample.GwLoss)) }
     $r
@@ -230,10 +239,14 @@ function Invoke-Status {
     $gw = if ($null -eq $s.GwMs) { '-' } else { "{0:N0} ms" -f $s.GwMs }
     Write-Host ("{0}  {1}, {2} {3:N0}%" -f (T '路由器' 'Router '), $gw, (T '丢包' 'loss'), $s.GwLoss)
     if ($s.FastNearby -gt 0) { Write-Host (T "附近同名 5/6GHz 热点: $($s.FastNearby) 个" "Same network on 5/6 GHz nearby: $($s.FastNearby) AP(s)") }
-    $r = Get-Reasons $s
-    if ($r) {
+    $r = @(Get-Reasons $s)
+    $hint = Get-BandHint $s
+    if ($r.Count) {
+        if ($hint) { $r += $hint }
         Write-Host ("`n" + (T '诊断: 连接差 — ' 'Diagnosis: slow — ') + ($r -join '; '))
         Write-Host (T '建议: eduroam-boost prefer-5g（一劳永逸）或 eduroam-boost boost' 'Try:  eduroam-boost prefer-5g (persistent) or eduroam-boost boost')
+    } elseif ($hint) {
+        Write-Host ("`n" + (T "诊断: 延迟正常（$hint，但现在不需要处理）" "Diagnosis: fine ($hint, but nothing to fix right now)"))
     } else { Write-Host ("`n" + (T '诊断: 正常' 'Diagnosis: fine')) }
     0
 }

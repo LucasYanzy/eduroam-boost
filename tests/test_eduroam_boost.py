@@ -62,8 +62,17 @@ class ParseTests(unittest.TestCase):
 
 
 class JudgementTests(unittest.TestCase):
-    def test_24ghz_with_faster_nearby_is_bad(self):
-        self.assertTrue(eb.is_bad(sample("2.4GHz", fast=["157 (5GHz, 40MHz)"])))
+    def test_24ghz_with_faster_nearby_only_hints_when_latency_fine(self):
+        # Real-world case: 25 ms on 2.4 GHz with a weaker 5 GHz nearby must not trigger reconnects.
+        s = sample("2.4GHz", gw=25, fast=["157 (5GHz, 40MHz)"])
+        self.assertFalse(eb.is_bad(s))
+        self.assertIsNotNone(eb.band_hint(s))
+        self.assertIsNone(eb.band_hint(sample("5GHz")))
+
+    def test_rate_zero_shown_as_unknown(self):
+        s = sample("2.4GHz")
+        s["link"]["rate"] = 0
+        self.assertIn("—Mbps", eb.describe(s))
 
     def test_24ghz_alone_and_fast_is_fine(self):
         self.assertFalse(eb.is_bad(sample("2.4GHz")))

@@ -47,8 +47,10 @@ Describe 'Get-Reasons / Get-Score' {
         $link24 = [pscustomobject]@{ Band = '2.4GHz'; Channel = 6 }
         $link5 = [pscustomobject]@{ Band = '5GHz'; Channel = 157 }
     }
-    It 'flags 2.4 GHz when a faster band is nearby' {
-        @(Get-Reasons ([pscustomobject]@{ Link = $link24; FastNearby = 1; GwMs = 10; GwLoss = 0 })).Count | Should -Be 1
+    It 'only hints (does not flag) 2.4 GHz with a faster band nearby when latency is fine' {
+        $s = [pscustomobject]@{ Link = $link24; FastNearby = 1; GwMs = 10; GwLoss = 0 }
+        @(Get-Reasons $s).Count | Should -Be 0
+        Get-BandHint $s | Should -Not -BeNullOrEmpty
     }
     It 'accepts 2.4 GHz when nothing faster exists and latency is fine' {
         @(Get-Reasons ([pscustomobject]@{ Link = $link24; FastNearby = 0; GwMs = 10; GwLoss = 0 })).Count | Should -Be 0
