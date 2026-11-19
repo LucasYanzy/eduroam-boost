@@ -1,0 +1,6 @@
+{"SPAirPortDataType": [{"spairport_airport_interfaces": [
+  {"_name": "en0",
+   "spairport_current_network_information": {
+     "_name": "<redacted>", "spairport_network_channel": "36 (5GHz, 80MHz)", "spairport_network_rate": 1200,
+     "spairport_security_mode": "spairport_security_mode_wpa2_personal", "spairport_signal_noise": "-48 dBm / -94 dBm"}}
+]}]}

@@ -1,0 +1,53 @@
+name: test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Unit + installer tests
+        run: python3 -m unittest discover -s tests -v
+      - name: CLI smoke test (no Wi-Fi on CI, must not crash)
+        run: |
+          python3 eduroam_boost.py --version
+          python3 eduroam_boost.py report
+      - name: Shortcut is a signed archive
+        run: test "$(head -c 4 ios/eduroam-Boost.shortcut)" = "AEA1"
+
+  shellcheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: shellcheck install.sh uninstall.sh
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Pester (PowerShell 7)
+        shell: pwsh
+        run: |
+          Install-Module Pester -MinimumVersion 5.5 -Force -Scope CurrentUser -SkipPublisherCheck
+          Invoke-Pester windows/tests -Output Detailed -CI
+      - name: Parses on Windows PowerShell 5.1
+        shell: powershell
+        run: |
+          foreach ($f in 'windows/eduroam-boost.ps1','windows/install.ps1','windows/uninstall.ps1') {
+            $t = $null; $e = $null
+            $null = [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path $f), [ref]$t, [ref]$e)
+            if ($e) { throw "$f : $e" }
+          }
+      - name: Installer dry run
+        shell: powershell
+        run: |
+          $env:EDUROAM_BOOST_DRY_RUN = '1'; $env:EDUROAM_BOOST_WATCH = 'none'; $env:EDUROAM_BOOST_PREFER5G = '0'
+          $env:EDUROAM_BOOST_INSTALL_DIR = Join-Path $env:RUNNER_TEMP 'eb'
+          ./windows/install.ps1
+          if (-not (Test-Path (Join-Path $env:EDUROAM_BOOST_INSTALL_DIR 'eduroam-boost.cmd'))) { throw 'shim missing' }
+          & (Join-Path $env:EDUROAM_BOOST_INSTALL_DIR 'eduroam-boost.cmd') version
+          ./windows/uninstall.ps1

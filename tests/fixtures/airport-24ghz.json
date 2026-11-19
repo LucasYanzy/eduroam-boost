@@ -1,0 +1,14 @@
+{"SPAirPortDataType": [{"spairport_airport_interfaces": [
+  {"_name": "en0",
+   "spairport_current_network_information": {
+     "_name": "<redacted>", "spairport_network_channel": "6 (2GHz, 20MHz)", "spairport_network_phymode": "802.11ax",
+     "spairport_network_rate": 24, "spairport_security_mode": "spairport_security_mode_wpa2_enterprise",
+     "spairport_signal_noise": "-73 dBm / -94 dBm"},
+   "spairport_airport_other_local_wireless_networks": [
+     {"_name": "<redacted>", "spairport_network_channel": "157 (5GHz, 40MHz)", "spairport_security_mode": "spairport_security_mode_wpa2_enterprise"},
+     {"_name": "<redacted>", "spairport_network_channel": "149 (5GHz, 80MHz)", "spairport_security_mode": "spairport_security_mode_wpa2_personal"},
+     {"_name": "<redacted>", "spairport_network_channel": "6 (2GHz, 20MHz)", "spairport_security_mode": "spairport_security_mode_wpa2_enterprise"},
+     {"_name": "<redacted>", "spairport_network_channel": "37 (6GHz, 160MHz)", "spairport_security_mode": "spairport_security_mode_wpa3_enterprise"}
+   ]},
+  {"_name": "awdl0"}
+]}]}
