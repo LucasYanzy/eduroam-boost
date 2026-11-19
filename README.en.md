@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="docs/assets/logo.svg" width="96" height="96" alt="eduroam-boost">
+
 # eduroam-boost
 
 **Campus Wi-Fi crawling? Measure where it's slow, then fix the part that's actually broken.**
@@ -16,9 +18,25 @@ On big campus networks like eduroam, devices often get stuck on a crowded or wea
 
 eduroam-boost does three things:
 
-- 🔍 **Measure**: band, signal, first-hop latency and loss; is the bottleneck the Wi-Fi hop or the network upstream?
-- ⚡ **Fix**: reconnect to pick a better access point, but only when the connection is actually slow (on Windows it can also make the adapter prefer 5 GHz permanently)
-- 📊 **Verify**: log before/after numbers, success rate, and how long each fix lasted, and say so plainly when it didn't help
+<table>
+<tr>
+<td width="33%" valign="top">
+<img src="docs/assets/measure.svg" width="32" height="32" alt=""><br>
+<b>Measure</b><br>
+<sub>Band, signal, first-hop latency and loss: is the bottleneck the Wi-Fi hop or the network upstream?</sub>
+</td>
+<td width="33%" valign="top">
+<img src="docs/assets/fix.svg" width="32" height="32" alt=""><br>
+<b>Fix</b><br>
+<sub>Reconnect to a better access point, only when it's actually slow; on Windows, make the adapter prefer 5 GHz for good</sub>
+</td>
+<td width="33%" valign="top">
+<img src="docs/assets/verify.svg" width="32" height="32" alt=""><br>
+<b>Verify</b><br>
+<sub>Log before/after numbers, success rate and how long each fix lasted, and say so plainly when it didn't help</sub>
+</td>
+</tr>
+</table>
 
 ```console
 $ eduroam-boost
@@ -52,10 +70,10 @@ Try:  eduroam-boost boost
 
 | Platform | What it can do | Install | Status |
 |---|---|---|---|
-| **macOS** | Diagnose · reconnect to a better AP · background watcher · effectiveness stats | One command | ✅ In daily use on real hardware |
-| **Windows** | All of the above, plus **make the adapter prefer 5 GHz permanently** | One command | 🧪 Experimental: automated tests pass, not yet verified on real hardware |
-| **iPhone / iPad** | One-tap Wi-Fi off/on (Shortcut) | Import a Shortcut | 🧪 Experimental: not yet verified on a device |
-| **Android** | Apps can't toggle Wi-Fi on modern Android | Manual steps | 📄 Instructions only |
+| **macOS** | Diagnose · reconnect to a better AP · background watcher · effectiveness stats | One command | <img src="docs/assets/status-stable-en.svg" height="20" alt=""> In daily use on real hardware |
+| **Windows** | All of the above, plus **make the adapter prefer 5 GHz permanently** | One command | <img src="docs/assets/status-experimental-en.svg" height="20" alt=""> Automated tests pass, not yet verified on real hardware |
+| **iPhone / iPad** | One-tap Wi-Fi off/on (Shortcut) | Import a Shortcut | <img src="docs/assets/status-experimental-en.svg" height="20" alt=""> Not yet verified on a device |
+| **Android** | Apps can't toggle Wi-Fi on modern Android | Manual steps | <img src="docs/assets/status-guide-en.svg" height="20" alt=""> |
 
 ## Install
 

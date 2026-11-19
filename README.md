@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="docs/assets/logo.svg" width="96" height="96" alt="eduroam-boost">
+
 # eduroam-boost
 
 **校园 Wi-Fi 卡？先测出慢在哪，再对症处理。**
@@ -16,9 +18,25 @@
 
 eduroam-boost 做三件事：
 
-- 🔍 **测**：频段、信号、到路由器的延迟和丢包，判断瓶颈是 Wi-Fi 这一跳还是学校出口
-- ⚡ **治**：只在确实很慢时重连 Wi-Fi、换热点（Windows 还能让网卡长期优先 5GHz）
-- 📊 **验**：记录每次处理前后的数据，统计成功率和效果维持了多久；没用的时候也会直说
+<table>
+<tr>
+<td width="33%" valign="top">
+<img src="docs/assets/measure.svg" width="32" height="32" alt=""><br>
+<b>测</b><br>
+<sub>频段、信号、到路由器的延迟和丢包，判断瓶颈是 Wi-Fi 这一跳还是学校出口</sub>
+</td>
+<td width="33%" valign="top">
+<img src="docs/assets/fix.svg" width="32" height="32" alt=""><br>
+<b>治</b><br>
+<sub>只在确实很慢时重连 Wi-Fi、换热点；Windows 还能让网卡长期优先 5GHz</sub>
+</td>
+<td width="33%" valign="top">
+<img src="docs/assets/verify.svg" width="32" height="32" alt=""><br>
+<b>验</b><br>
+<sub>记录每次处理前后的数据，统计成功率和效果维持了多久；没用的时候也会直说</sub>
+</td>
+</tr>
+</table>
 
 ```console
 $ eduroam-boost
@@ -52,10 +70,10 @@ $ eduroam-boost
 
 | 平台 | 能做什么 | 安装方式 | 状态 |
 |---|---|---|---|
-| **macOS** | 诊断 · 重连换热点 · 后台监控 · 效果统计 | 一行命令 | ✅ 真机使用中 |
-| **Windows** | 以上全部，外加**让网卡长期优先 5GHz** | 一行命令 | 🧪 实验性：自动测试通过，尚未在真机上验证 |
-| **iPhone / iPad** | 一键关开 Wi-Fi（快捷指令） | 导入快捷指令 | 🧪 实验性：尚未在真机上验证 |
-| **安卓** | 系统不允许 App 开关 Wi-Fi | 手动操作 | 📄 仅提供说明 |
+| **macOS** | 诊断 · 重连换热点 · 后台监控 · 效果统计 | 一行命令 | <img src="docs/assets/status-stable-zh.svg" height="20" alt=""> 真机使用中 |
+| **Windows** | 以上全部，外加**让网卡长期优先 5GHz** | 一行命令 | <img src="docs/assets/status-experimental-zh.svg" height="20" alt=""> 自动测试通过，尚未在真机上验证 |
+| **iPhone / iPad** | 一键关开 Wi-Fi（快捷指令） | 导入快捷指令 | <img src="docs/assets/status-experimental-zh.svg" height="20" alt=""> 尚未在真机上验证 |
+| **安卓** | 系统不允许 App 开关 Wi-Fi | 手动操作 | <img src="docs/assets/status-guide-zh.svg" height="20" alt=""> |
 
 ## 安装
 
